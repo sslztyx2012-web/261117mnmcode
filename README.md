@@ -34,7 +34,7 @@
 | 移动 | `W` `A` `S` `D` |
 | 疾跑 | `Shift` |
 | 跳跃 | `Space` |
-| 蹲下 | `Ctrl` |
+| 蹲下（按一次蹲下，再按一次站起） | `Q` |
 | 开火 | 鼠标左键 |
 | 瞄准（光学瞄镜） | 鼠标右键 |
 | 换弹 | `R` |
@@ -59,15 +59,19 @@ AK-74M 与 M870 两把枪都是完整建模的：机匣、皮卡汀尼导轨、�
 **敌人与玩法**
 五种感染者（walker / runner / brute / spitter / crawler）各有独立的体型、速度、血量与 AI 行为。门有木板和耐久度，可以用废料加固；击杀掉落弹药与废料；难度、灵敏度、画质、泛光都在设置里。
 
+**围城：感染者会真的打进基地**
+感染者不再只在门外干瞪眼。一张 0.5 米的导航网格每 0.2 秒从玩家位置重新泛洪一次，尸群会自动绕开障碍、找到大门的缺口、穿过营房与指挥部的门洞，一路追到你面前。围墙上有四处可以砸开的加固段：普通感染者要砸十几下，brute 只要几下就能把混凝土墙敲穿，碎石会留在原地。围墙东侧还有一段已经塌掉的破口，不用拆就能直接挤进来。
+反过来，南墙有一处 1.2 米高的矮口：**只有蹲下的玩家钻得过去，感染者永远过不来** —— 那是给你留的逃生通道，不是给它们的。
+
 **其它**
 中英双语界面、雷达小地图、受击方向指示、命中标记、程序化音效、照片模式（`?photo=1&shot=N`）、死亡统计。
 
 ### 技术
 
-- 单文件：`dead-dawn.html`，约 240 KB，自包含。
+- 单文件：`dead-dawn.html`，约 250 KB，自包含。
 - 渲染：three.js r160（唯一外部依赖，CDN import map），WebGL2。
 - 零外部素材：贴图 = Canvas 2D 噪声；模型 = 代码几何；音效 = WebAudio 合成。
-- 性能：约 340–360 draw calls、约 390k 三角形、1080p 下 110–140 FPS（高档画质）。
+- 性能：约 260–430 draw calls、约 370–410k 三角形、1080p 下 110–144 FPS（高档画质）。导航寻路每 0.2 秒重算一次，单次约 1.5 ms。
 - 渲染分两遍：世界（layer 0）与第一人称武器（layer 3）分别用不同的镜头参数渲染，武器有独立的 52° 视角，避免近距离透视把枪身拉变形。
 
 ### 仓库结构
@@ -103,7 +107,7 @@ Everything in the game is **procedurally generated**: not a single external text
 | Move | `W` `A` `S` `D` |
 | Sprint | `Shift` |
 | Jump | `Space` |
-| Crouch | `Ctrl` |
+| Crouch (press to toggle) | `Q` |
 | Fire | Left mouse |
 | Aim (optic) | Right mouse |
 | Reload | `R` |
@@ -128,15 +132,19 @@ Concrete, rusted metal, wood, bark, cloth, rubber and hazard-stripe materials ar
 **Enemies and gameplay**
 Five infected types (walker / runner / brute / spitter / crawler), each with its own size, speed, health and behaviour. Doors have boards and durability that you can reinforce with scrap. Kills drop ammunition and scrap. Difficulty, sensitivity, quality and bloom all live in the settings menu.
 
+**Siege: the infected actually break into the base**
+They no longer mill about outside. A 0.5 m navigation grid is flood-filled from your position a few times a second, so the horde paths around obstacles, finds the gap in the main gate, slips through the building doorways and reaches you. Four sections of the perimeter wall can be knocked down: a regular walker needs a dozen swings, a brute punches through the concrete in a few, and the rubble is left behind. A collapsed section on the east wall needs no demolition at all — they simply squeeze through it.
+The other way round: there is a 1.2 m crawl-through in the south wall that **only a crouching player fits through — the infected never can**. That one is your escape route, not theirs.
+
 **Extras**
 Chinese / English UI, radar minimap, directional damage indicators, hit markers, procedural audio, a photo mode (`?photo=1&shot=N`) and an end-of-run scorecard.
 
 ### Tech
 
-- One file: `dead-dawn.html`, ~240 KB, fully self-contained.
+- One file: `dead-dawn.html`, ~250 KB, fully self-contained.
 - Rendering: three.js r160 (the only external dependency, via CDN import map), WebGL2.
 - Zero external assets: textures = Canvas 2D noise, meshes = code geometry, audio = WebAudio synthesis.
-- Performance: ~340–360 draw calls, ~390k triangles, 110–140 FPS at 1080p on high quality.
+- Performance: ~260–430 draw calls, ~370–410k triangles, 110–144 FPS at 1080p on high quality. The navigation field is recomputed every 0.2 s at roughly 1.5 ms per pass.
 - Two-pass rendering: the world (layer 0) and the first-person weapon (layer 3) are rendered with different lens parameters — the weapon gets its own 52° lens so close-range perspective doesn't smear the gun into unreadable wedges.
 
 ### Repository layout
