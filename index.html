@@ -330,12 +330,12 @@ const STR = {
     picked_ammo:'获得步枪弹药', picked_shell:'获得霰弹', picked_med:'获得医疗包', picked_scrap:'获得废料',
     heal:'+35 生命', need_scrap:'需要 {n} 废料', repaired:'路障已修复', barricaded:'路障已加固',
     act_build:'加固路障', act_repair:'修复路障',
-    gate_broken:'路障被攻破！', low_ammo:'弹药不足！', no_weapon:'无可用武器',
+    gate_broken:'路障被攻破！', wall_breached:'围墙被撞开了！', low_ammo:'弹药不足！', no_weapon:'无可用武器',
     enemy_sighted:'发现感染者', wave_near:'第 {n} 波即将开始',
     hud_zoom:'', zoom_hint:'右键瞄准',
-    keys:{move:'移动', sprint:'疾跑', jump:'跳跃', crouch:'蹲下', fire:'开火', ads:'瞄准',
+    keys:{move:'移动', sprint:'疾跑', jump:'跳跃', crouch:'蹲下（切换）', fire:'开火', ads:'瞄准',
           reload:'换弹', swap:'切换武器', interact:'互动 / 加固路障', light:'手电筒', pause:'暂停'},
-    key_move:'W A S D', key_sprint:'Shift', key_jump:'Space', key_crouch:'Ctrl',
+    key_move:'W A S D', key_sprint:'Shift', key_jump:'Space', key_crouch:'Q',
     key_fire:'鼠标左键', key_ads:'鼠标右键', key_reload:'R', key_swap:'1 / 2',
     key_interact:'E', key_light:'F', key_pause:'Esc',
     t_hold:'按住', t_toggle:'切换'
@@ -360,12 +360,12 @@ const STR = {
     picked_ammo:'Rifle ammo acquired', picked_shell:'Shells acquired', picked_med:'Medkit acquired', picked_scrap:'Scrap acquired',
     heal:'+35 HP', need_scrap:'Needs {n} scrap', repaired:'Barricade repaired', barricaded:'Barricade reinforced',
     act_build:'Reinforce barricade', act_repair:'Repair barricade',
-    gate_broken:'BARRICADE BREACHED!', low_ammo:'Out of ammo!', no_weapon:'No weapon',
+    gate_broken:'BARRICADE BREACHED!', wall_breached:'PERIMETER WALL BREACHED!', low_ammo:'Out of ammo!', no_weapon:'No weapon',
     enemy_sighted:'Infected sighted', wave_near:'Wave {n} incoming',
     hud_zoom:'', zoom_hint:'Right click to aim',
-    keys:{move:'Move', sprint:'Sprint', jump:'Jump', crouch:'Crouch', fire:'Fire', ads:'Aim',
+    keys:{move:'Move', sprint:'Sprint', jump:'Jump', crouch:'Crouch (toggle)', fire:'Fire', ads:'Aim',
           reload:'Reload', swap:'Switch weapon', interact:'Interact / Barricade', light:'Flashlight', pause:'Pause'},
-    key_move:'W A S D', key_sprint:'Shift', key_jump:'Space', key_crouch:'Ctrl',
+    key_move:'W A S D', key_sprint:'Shift', key_jump:'Space', key_crouch:'Q',
     key_fire:'Left Mouse', key_ads:'Right Mouse', key_reload:'R', key_swap:'1 / 2',
     key_interact:'E', key_light:'F', key_pause:'Esc',
     t_hold:'Hold', t_toggle:'Toggle'
@@ -1536,26 +1536,45 @@ function buildForest(){
 
 /* ------------------------------ outpost ------------------------------ */
 const MAT_WOOD_PANEL=null; // resolved at runtime from MAT.wood
-function wallRun(axis,fixed,a0,a1,h,thick,openings,mat){
+function wallRun(axis,fixed,a0,a1,h,thick,openings,mat,panels){
   const segs=[]; let cur=a0;
   const sorted=(openings||[]).slice().sort((p,q)=>p.a-q.a);
   for(const o of sorted){ if(o.a>cur) segs.push([cur,o.a]); cur=Math.max(cur,o.b); }
   if(cur<a1) segs.push([cur,a1]);
-  for(const [s,e] of segs){
-    const w=e-s; if(w<=0.01) continue;
+  const seg=(s,e)=>{ const w=e-s; if(w<=0.01) return;
     wallSeg(axis,fixed,s,e,h,thick);
     if(axis==='x') addCollider((s+e)/2,fixed,w/2,thick/2,h,'wall');
-    else addCollider(fixed,(s+e)/2,thick/2,w/2,h,'wall');
+    else addCollider(fixed,(s+e)/2,thick/2,w/2,h,'wall'); };
+  const pan=(s,e,tag)=>{ const w=e-s; if(w<=0.05) return;
+    wallPanel(axis,fixed,s,e,h,thick,Math.round(w*150),tag); };
+  // breakable panels are carved out of the merged run and kept as their own
+  // meshes, so the infected can actually knock a hole through them
+  const pans=(panels||[]).slice().sort((p,q)=>p[0]-q[0]);
+  for(const [s0,e0] of segs){
+    let a=s0;
+    for(const pd of pans){
+      const ps=pd[0],pe=pd[1],tg=pd[2]||null;
+      if(pe<=a||ps>=e0) continue;
+      if(ps>a) seg(a,Math.min(ps,e0));
+      pan(Math.max(ps,a),Math.min(pe,e0),tg);
+      a=Math.min(pe,e0);
+    }
+    if(a<e0) seg(a,e0);
   }
   for(const o of (openings||[])){
     const w=o.b-o.a, top=o.top||2.3;
-    if(h-top<=0.03) continue;
-    wallLintel(axis,fixed,o.a,o.b,top,h,thick);
+    if(h-top>0.03) wallLintel(axis,fixed,o.a,o.b,top,h,thick);
+    // a low breach is sealed with a crouch-only collider: the player can crawl
+    // out under it, the infected are too tall to ever squeeze through
+    if(top<1.6){
+      if(axis==='x') addCollider((o.a+o.b)/2,fixed,(o.b-o.a)/2,thick/2,top,'low');
+      else addCollider(fixed,(o.a+o.b)/2,thick/2,(o.b-o.a)/2,top,'low');
+    }
   }
 }
 /* builds one wall segment in a canonical frame (length along +x, thickness along
    z) and drops it into the shared environment batches */
-function wallSeg(axis,fixed,s,e,h,thick){
+function wallSegParts(axis,fixed,s,e,h,thick){
   const len=e-s, W=[],M=[],R=[],S=[];
   const main=bx(len,h,thick,1.7); main.translate(len/2,h/2,0); W.push(main);
   const plinth=bx(len,0.32,thick+0.18,1.7); plinth.translate(len/2,0.16,0); W.push(plinth);
@@ -1600,8 +1619,56 @@ function wallSeg(axis,fixed,s,e,h,thick){
   const place=(g)=>{ if(!g) return;
     if(axis==='x') g.translate(s,0,fixed); else { g.rotateY(-Math.PI/2); g.translate(fixed,0,s); } };
   place(wg); place(mg); place(rg); place(sg);
-  envAdd('concrete',wg); envAdd('metalDark',mg);
-  if(rg) envAdd('decalRust',rg); if(sg) envAdd('decalMoss',sg);
+  return {concrete:wg, metalDark:mg, decalRust:rg, decalMoss:sg};
+}
+function wallSeg(axis,fixed,s,e,h,thick){
+  const p=wallSegParts(axis,fixed,s,e,h,thick);
+  envAdd('concrete',p.concrete); envAdd('metalDark',p.metalDark);
+  if(p.decalRust) envAdd('decalRust',p.decalRust);
+  if(p.decalMoss) envAdd('decalMoss',p.decalMoss);
+}
+/* a breakable wall section: kept out of the merged batch so it can be
+   knocked down at runtime, leaving a real hole in the perimeter */
+const BREACH_PANELS=[];
+function wallPanel(axis,fixed,s,e,h,thick,hp,tag){
+  const p=wallSegParts(axis,fixed,s,e,h,thick);
+  const g=new THREE.Group();
+  for(const k of ['concrete','metalDark']){
+    if(!p[k]) continue;
+    const m=new THREE.Mesh(p[k],ENVMAT[k]||MAT[k]);
+    m.castShadow=true; m.receiveShadow=true; g.add(m);
+  }
+  scene.add(g);
+  const c=(axis==='x')?addCollider((s+e)/2,fixed,(e-s)/2,thick/2,h,'wall')
+                     :addCollider(fixed,(s+e)/2,thick/2,(e-s)/2,h,'wall');
+  c.hp=hp; c.maxHp=hp; c.breakable=true; c.group=g; c.tag=tag||null;
+  BREACH_PANELS.push(c);
+  return c;
+}
+function breakWall(c){
+  if(!c||!c.active) return;
+  c.active=false; c.hp=0;
+  if(c.group){
+    scene.remove(c.group);
+    c.group.traverse(o=>{ if(o.isMesh&&o.geometry) o.geometry.dispose(); });
+    c.group=null;
+  }
+  // rubble pile left in the breach
+  const g=new THREE.Group();
+  for(let i=0;i<8;i++){
+    const r=new THREE.Mesh(new THREE.IcosahedronGeometry(0.17+Math.random()*0.25,0),MAT.concrete);
+    r.position.set(c.x+rnd(-c.hw*0.9,c.hw*0.9),0.10+Math.random()*0.22,c.z+rnd(-c.hd*0.9,c.hd*0.9));
+    r.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
+    r.castShadow=true; r.receiveShadow=true; g.add(r);
+  }
+  scene.add(g);
+  if(PAR) for(let i=0;i<26;i++)
+    PAR.spawn(c.x+rnd(-c.hw,c.hw),rnd(0.2,1.8),c.z+rnd(-c.hd,c.hd),
+      rnd(-3,3),rnd(1,5),rnd(-3,3),rnd(.5,1.1),rnd(.05,.13),0.66,0.62,0.55,9);
+  Audio.wallBreak();
+  toast(t('wall_breached'),'bad');
+  GAME.score+=40;
+  NAV.dirty=true;            // the hole changes the routes the infected can use
 }
 function wallLintel(axis,fixed,a,b,top,h,thick){
   const len=b-a, W=[];
@@ -2057,15 +2124,37 @@ function addWreck(x,z,rot){
 function buildOutpost(){
   // ---- perimeter compound ----
   const WH=2.5, WT=0.5;
-  wallRun('x',-14,-16,16,WH,WT,[{a:-2.6,b:2.6,top:2.5}],MAT.concrete);
-  wallRun('x', 14,-16,16,WH,WT,[{a:6.5,b:9.5,top:1.2}],MAT.concrete);
-  wallRun('z',-16,-14,14,WH,WT,[{a:3,b:6,top:2.5}],MAT.concrete);
-  wallRun('z', 16,-14,14,WH,WT,[],MAT.concrete);
+  // north wall (z=-14) with the main gate, south wall (z=14) with the low
+  // crawl-through breach, west wall (x=-16) with the side gate, east wall
+  // (x=16) with a collapsed section the infected pour through.
+  // "panels" are breakable sections the infected can knock down.
+  wallRun('x',-14,-16,16,WH,WT,[{a:-2.6,b:2.6,top:2.5}],MAT.concrete,[[6,10,'n']]);
+  wallRun('x', 14,-16,16,WH,WT,[{a:6.5,b:9.5,top:1.2}],MAT.concrete,[[-9,-5,'s']]);
+  wallRun('z',-16,-14,14,WH,WT,[{a:3,b:6,top:2.5}],MAT.concrete,[[-9,-5,'w']]);
+  wallRun('z', 16,-14,14,WH,WT,[{a:-2,b:2,top:2.5}],MAT.concrete,[[6,10,'e']]);
+  // rubble around the collapsed east breach
+  {
+    const rb=[];
+    for(let i=0;i<16;i++){
+      const side=(i%2)?1:-1;
+      const g=jitterGeo(new THREE.IcosahedronGeometry(0.20+Math.random()*0.30,0),0.08,i*3.1);
+      g.translate(16+side*rnd(0.35,1.1),rnd(0.05,0.30),rnd(-2.6,2.6));
+      rb.push(g);
+    }
+    for(let i=0;i<5;i++){
+      const rb2=new THREE.CylinderGeometry(0.02,0.02,0.8+Math.random()*0.7,4);
+      rb2.rotateZ(rnd(-1.1,1.1)); rb2.rotateX(rnd(-0.7,0.7));
+      rb2.translate(16+rnd(-0.4,0.4),rnd(0.2,1.0),rnd(-2.6,2.6));
+      envAdd('metalDark',rb2);
+    }
+    envAdd('concrete',mergeGeos(rb));
+  }
   // razor wire coils on top of the walls (merged -> a single draw call)
   {
     const coils=[],strands=[];
     for(const [ax,fix,from,to] of [['x',-14,-16,16],['x',14,-16,16],['z',-16,-14,14],['z',16,-14,14]]){
       for(let s=from;s<to;s+=0.55){
+        if(ax==='z'&&fix===16&&s>-3.2&&s<2.8) continue;   // collapsed east breach
         const t=new THREE.TorusGeometry(0.21,0.017,4,9);
         if(ax==='x') t.rotateY(Math.PI/2);
         t.rotateZ(s*1.3);
@@ -2301,6 +2390,7 @@ const P={
   pos:new THREE.Vector3(3.6,0,-8.4), vel:new THREE.Vector3(),
   yaw:Math.PI, pitch:-0.04, hp:100, maxhp:100, stamina:100,
   crouch:0, onGround:true, eye:1.66, radius:0.36,
+  crouchOn:false,
   speed:0, bob:0, bobPhase:0, roll:0, hurtT:0, hurtDir:0,
   flashOn:true, scrap:0, kills:0, score:0, dead:false, deadT:0,
   recoil:0, recoilV:0, walkT:0, stepT:0, lastStep:0, damageFlash:0
@@ -2319,6 +2409,9 @@ function collideCircle(pos,radius,skip){
     const c=COL[i];
     if(!c.active) continue;
     if(c.type==='decal') continue;
+    // the low breach in the perimeter wall: only a crouching player fits
+    // under it, and the infected never can.
+    if(c.type==='low'&&P.crouch>0.5) continue;
     const dx=pos.x-c.x, dz=pos.z-c.z;
     const ox=c.hw+radius-Math.abs(dx), oz=c.hd+radius-Math.abs(dz);
     if(ox>0&&oz>0){
@@ -2358,7 +2451,7 @@ function updatePlayer(dt){
   if(KEYS['KeyD']||KEYS['ArrowRight'])ix+=1;
   const mag=Math.hypot(ix,iz); if(mag>0){ix/=mag;iz/=mag;}
   const wantSprint=(KEYS['ShiftLeft']||KEYS['ShiftRight'])&&mag>0&&P.stamina>1&&!P.crouch&&!isReloading();
-  const crouching=!!(KEYS['ControlLeft']||KEYS['ControlRight']);
+  const crouching=!!P.crouchOn;   // Q toggles the crouch stance on and off
   P.crouch=lerp(P.crouch,crouching?1:0,1-Math.pow(0.001,dt));
 
   let maxSpeed=4.35;
@@ -4014,39 +4107,47 @@ class Zombie{
     const tdx=tgt.x-this.root.position.x, tdz=tgt.z-this.root.position.z;
     const tdist=Math.hypot(tdx,tdz);
     const reach=(this.type==='brute')?2.35:(this.type==='crawler')?1.45:1.75;
-    let blockedDoor=null;
-    if(dist>reach){
+    let blockedDoor=null, blockedWall=null;
+    // heading + probe point: needed for the steering and for the door check
+    let dirx=tdx/Math.max(tdist,0.001), dirz=tdz/Math.max(tdist,0.001);
+    this.hitDirX=dirx; this.hitDirZ=dirz;
+    if(this.nudgeT>0){ this.nudgeT-=dt; dirx+=this.nudgeX*1.3; dirz+=this.nudgeZ*1.3; }
+    const probe=1.5+this.scale*0.4;
+    const aheadX=this.root.position.x+dirx*probe, aheadZ=this.root.position.z+dirz*probe;
+    // a breakable panel in the way?  tear it open - the target may well be
+    // behind the wall, so this is checked before the reach test
+    const bw=breakableAhead(this);
+    if(bw){ blockedWall=bw; }
+    else{
+      const dc=doorBlocking(aheadX,aheadZ,0.1);
+      if(dc) blockedDoor=dc;
+    }
+    if(dist>reach&&!blockedWall&&!blockedDoor){
       const ang=Math.atan2(tdz,tdx);
       this.aimYaw=ang;
       const spd=this.speed*(this.type==='runner'&&dist>6?1:0.92);
       // obstacle steering
-      let dirx=tdx/Math.max(tdist,0.001), dirz=tdz/Math.max(tdist,0.001);
-      const probe=1.5+this.scale*0.4;
-      const aheadX=this.root.position.x+dirx*probe, aheadZ=this.root.position.z+dirz*probe;
-      const dc=doorBlocking(aheadX,aheadZ,0.1);
-      if(dc){ blockedDoor=dc; }
-      else{
-        // check wall ahead and slide around
+      {
+        // otherwise slide along the wall towards its nearest opening
         for(const c of COL){
           if(!c.active||c.type==='door') continue;
           const ox=c.hw+0.6-Math.abs(aheadX-c.x), oz=c.hd+0.6-Math.abs(aheadZ-c.z);
           if(ox>0&&oz>0){
-            const sideA=Math.abs((aheadX+(c.hd+0.8))-c.x), sideB=Math.abs((aheadX-(c.hd+0.8))-c.x);
-            const s=(sideA<sideB)?1:-1;
-            dirx+= (c.z>this.root.position.z? -1:1)*0+s*0.9*0;
-            dirz+= 0;
-            // steer tangentially
-            const perpX=(aheadZ-c.z), perpZ=-(aheadX-c.x);
-            const pl=Math.hypot(perpX,perpZ)||1;
-            dirx+= (perpX/pl)*s*0.85; dirz+=(perpZ/pl)*s*0.85;
+            const alongX=c.hw>c.hd;
+            const half=Math.max(c.hw,c.hd);
+            const cur=alongX?aheadX:aheadZ, cen=alongX?c.x:c.z;
+            const endA=cen-half, endB=cen+half;
+            const endE=(Math.abs(cur-endA)<Math.abs(cur-endB))?endA:endB;
+            if(alongX) dirx+= (Math.sign(endE-aheadX)||1)*0.95;
+            else      dirz+= (Math.sign(endE-aheadZ)||1)*0.95;
             break;
           }
         }
-        const dl=Math.hypot(dirx,dirz)||1;
-        this.move(dt,dirx/dl,dirz/dl,spd);
       }
+      const dl=Math.hypot(dirx,dirz)||1;
+      this.move(dt,dirx/dl,dirz/dl,spd);
       this.animate(dt,spd);
-    }else{
+    }else if(!blockedWall&&!blockedDoor){
       // in reach -> attack
       if(this.attackCd<=0){ this.attackCd=(this.type==='brute')?1.55:1.05; this.attackAnim=0.45; this.didHit=false; }
       if(this.attackAnim>0&&!this.didHit&&this.attackAnim<0.26){
@@ -4070,14 +4171,37 @@ class Zombie{
         }
       }
       this.animate(dt,0.5);
+    }else if(blockedWall){
+      // smash straight through the perimeter wall
+      this.state='attackWall';
+      this.wallTarget=blockedWall;
+      this.aimYaw=Math.atan2(blockedWall.z-this.root.position.z, blockedWall.x-this.root.position.x);
+      this.wallSwing=(this.wallSwing||0)+dt;
+      if(this.wallSwing>0.55){ this.wallSwing=0;
+        blockedWall.hp-= (this.type==='brute'?46:22);
+        Audio.concreteHit();
+        const hp=blockedWall;
+        if(PAR) for(let i=0;i<8;i++)
+          PAR.spawn(hp.x+rnd(-hp.hw,hp.hw),rnd(0.2,2.0),hp.z+rnd(-hp.hd,hp.hd),
+            rnd(-2,2),rnd(0.5,3),rnd(-2,2),rnd(.3,.7),rnd(.03,.08),0.68,0.64,0.56,7);
+        if(blockedWall.hp<=0) breakWall(blockedWall);
+      }
+      this.animate(dt,0.5);
     }else{ this.state='chase'; }
     // spitter ranged attack
     if(this.type==='spitter'&&dist<20&&dist>4&&this.attackCd<=0&&this.state==='chase'){
       this.attackCd=2.6; this.spit();
     }
+    // pinned against geometry for a long time?  shuffle sideways to get loose
+    if(this.state==='chase'&&(this.stuckT||0)>2.4){
+      this.stuckT=0;
+      const a=Math.random()*6.283;
+      this.nudgeX=Math.cos(a); this.nudgeZ=Math.sin(a); this.nudgeT=0.9;
+    }
   }
   move(dt,dx,dz,spd){
     const r=0.34*this.scale;
+    const px0=this.root.position.x, pz0=this.root.position.z;
     const nx=this.root.position.x+dx*spd*dt, nz=this.root.position.z+dz*spd*dt;
     this.root.position.x=nx; this.root.position.z=nz;
     // resolve against static colliders
@@ -4090,6 +4214,9 @@ class Zombie{
         else this.root.position.z+=(ddz>=0?oz:-oz);
       }
     }
+    // stuck watchdog: pinned against a wall for too long
+    const moved=Math.hypot(this.root.position.x-px0,this.root.position.z-pz0);
+    if(moved<spd*dt*0.35) this.stuckT=(this.stuckT||0)+dt; else this.stuckT=0;
   }
   animate(dt,spd){
     const D=this.D, crawl=this.type==='crawler';
@@ -4227,30 +4354,124 @@ class Zombie{
   }
 }
 const _v1=new THREE.Vector3(),_v2=new THREE.Vector3(),_v3=new THREE.Vector3();
-/* --- navigation: region waypoints so infected route through the gates --- */
-const GATES=[{x:0,z:-14.8},{x:8,z:14.8},{x:-16.8,z:4.5}];
-const HQDOOR={x:3.65,z:-3.9}, BRDOOR={x:-5.1,z:4.0};
-function regionOf(x,z){
-  if(x>-2.2&&x<12.2&&z>-11.7&&z<-3.1) return 'hq';
-  if(x>-14.1&&x<-5.0&&z>-0.2&&z<9.2) return 'barracks';
-  if(x>-16.7&&x<16.7&&z>-14.7&&z<14.7) return 'yard';
-  return 'wild';
+/* --- navigation grid: the infected route to the player on their own ------ */
+/* A coarse grid over the whole outpost is flood-filled from the player, so the
+   infected walk around obstacles, queue for the gates and - when the wall is
+   the short way in - smash straight through it instead of milling about. */
+const NAV={cell:0.5,x0:-32,z0:-32,nx:128,nz:128,
+           blocked:null,pcost:null,dist:null,buckets:null,dirty:true,acc:0};
+const NDX=[1,-1,0,0,1,1,-1,-1], NDZ=[0,0,1,-1,1,-1,1,-1];
+NAV.dist=new Int32Array(NAV.nx*NAV.nz);
+NAV.buckets=[]; for(let i=0;i<1024;i++) NAV.buckets.push([]);
+function navRebuildBlocked(){
+  const {cell,x0,z0,nx,nz}=NAV;
+  const blocked=new Uint8Array(nx*nz), pcost=new Uint8Array(nx*nz);
+  for(let iz=0;iz<nz;iz++){
+    for(let ix=0;ix<nx;ix++){
+      const cx=x0+(ix+0.5)*cell, cz=z0+(iz+0.5)*cell;
+      let b=0,p=0;
+      for(let i=0;i<COL.length;i++){
+        const c=COL[i];
+        if(!c.active) continue;
+        if(c.type==='decal'||c.type==='door') continue;
+        const inside=Math.abs(cx-c.x)<c.hw+0.30 && Math.abs(cz-c.z)<c.hd+0.30;
+        if(c.breakable){ if(inside) p=3; continue; }  // smashable: passable but costly
+        if(c.type==='low'){ if(inside){b=1;break;} continue; }  // crawl hole: too tight
+        if(inside){ b=1; break; }
+      }
+      blocked[iz*nx+ix]=b; pcost[iz*nx+ix]=p;
+    }
+  }
+  NAV.blocked=blocked; NAV.pcost=pcost; NAV.dirty=false;
+}
+/* Dijkstra over the grid, seeded at the player: every cell knows how far the
+   infected have to walk to reach him. */
+function navField(){
+  const {nx,nz,cell,x0,z0}=NAV;
+  if(NAV.dirty||!NAV.blocked) navRebuildBlocked();
+  const blocked=NAV.blocked, pcost=NAV.pcost, dist=NAV.dist;
+  dist.fill(-1);
+  const pi=Math.floor((P.pos.x-x0)/cell), pj=Math.floor((P.pos.z-z0)/cell);
+  if(pi<0||pi>=nx||pj<0||pj>=nz) return dist;
+  const NB=1024, buckets=NAV.buckets;
+  for(let i=0;i<NB;i++) buckets[i].length=0;
+  const start=pj*nx+pi; dist[start]=0; buckets[0].push(start);
+  for(let cur=0;cur<NB;cur++){
+    const b=buckets[cur%NB];
+    if(!b.length) continue;
+    while(b.length){
+      const c=b.pop();
+      if(dist[c]!==cur) continue;
+      const ci=c%nx, cj=(c-ci)/nx;
+      for(let k=0;k<8;k++){
+        const ni=ci+NDX[k], nj=cj+NDZ[k];
+        if(ni<0||ni>=nx||nj<0||nj>=nz) continue;
+        const nc=nj*nx+ni;
+        if(blocked[nc]) continue;
+        if(k>=4&&(blocked[cj*nx+ni]||blocked[nj*nx+ci])) continue;  // no corner cutting
+        const nd=cur+(k>=4?2:1)+pcost[nc];
+        if(dist[nc]>=0&&dist[nc]<=nd) continue;
+        dist[nc]=nd; buckets[nd%NB].push(nc);
+      }
+    }
+  }
+  return dist;
 }
 function navTarget(zr){
-  const pr=regionOf(P.pos.x,P.pos.z);
-  const zr2=regionOf(zr.root.position.x,zr.root.position.z);
-  if(zr2===pr) return P.pos;
-  if(zr2==='wild'){
-    let best=GATES[0],bd=1e9;
-    for(const g of GATES){ const d=(g.x-zr.root.position.x)**2+(g.z-zr.root.position.z)**2;
-      if(d<bd){bd=d;best=g;} }
-    return best;
+  const {cell,x0,z0,nx,nz,dist,blocked}=NAV;
+  if(!NAV.dist) return P.pos;
+  const px=zr.root.position.x, pz=zr.root.position.z;
+  let ci=Math.floor((px-x0)/cell), cj=Math.floor((pz-z0)/cell);
+  if(ci<0||ci>=nx||cj<0||cj>=nz) return P.pos;
+  let idx=cj*nx+ci;
+  if(dist[idx]<0){
+    // standing in a blocked cell: hop to the closest reachable neighbour
+    let nb=-1,nd=1e9;
+    for(let k=0;k<8;k++){
+      const ni=ci+NDX[k], nj=cj+NDZ[k];
+      if(ni<0||ni>=nx||nj<0||nj>=nz) continue;
+      const v=dist[nj*nx+ni];
+      if(v>=0&&v<nd){nd=v;nb=nj*nx+ni;}
+    }
+    if(nb<0) return P.pos;
+    idx=nb;
   }
-  if(zr2==='yard'){
-    if(pr==='hq') return HQDOOR;
-    if(pr==='barracks') return BRDOOR;
+  // follow the gradient a couple of cells so the walk stays smooth
+  let best=idx, bd=dist[idx];
+  for(let step=0;step<3;step++){
+    const bi=best%nx, bj=(best-bi)/nx;
+    let nb=-1,ns=1e9;
+    for(let k=0;k<8;k++){
+      const ni=bi+NDX[k], nj=bj+NDZ[k];
+      if(ni<0||ni>=nx||nj<0||nj>=nz) continue;
+      const nc=nj*nx+ni;
+      const v=dist[nc];
+      if(v<0) continue;
+      if(k>=4&&(blocked[bj*nx+ni]||blocked[nj*nx+bi])) continue;
+      if(v<ns){ns=v;nb=nc;}
+    }
+    if(nb<0||ns>=bd) break;
+    bd=ns; best=nb;
+    if(bd<=0) break;
   }
-  return P.pos;
+  if(best===idx) return P.pos;
+  return {x:x0+(best%nx+0.5)*cell, z:z0+((best-(best%nx))/nx+0.5)*cell};
+}
+/* is a breakable wall panel right in front of this infected? */
+function breakableAhead(z){
+  let best=null,bd=1.9;
+  const px=z.root.position.x, pz=z.root.position.z;
+  const hx=z.hitDirX||0, hz=z.hitDirZ||0;
+  for(const c of BREACH_PANELS){
+    if(!c.active||c.hp<=0) continue;
+    const dx=Math.max(0,Math.abs(px-c.x)-c.hw), dz=Math.max(0,Math.abs(pz-c.z)-c.hd);
+    const d=Math.hypot(dx,dz);
+    if(d>=bd) continue;
+    const tx=c.x-px, tz=c.z-pz, tl=Math.hypot(tx,tz)||1;
+    if(d>0.5 && (tx/tl)*hx+(tz/tl)*hz<0.15) continue;   // not in front of us
+    bd=d; best=c;
+  }
+  return best;
 }
 function raySphere(o,d,c,r){
   const ox=o.x-c.x, oy=o.y-c.y, oz=o.z-c.z;
@@ -4539,6 +4760,8 @@ const Audio={
   },
   impact(){ this.burst({type:'bandpass',f0:3200,q:1.6,dur:0.06,gain:0.18}); },
   woodHit(){ this.burst({type:'bandpass',f0:900,q:1.4,dur:0.11,gain:0.30,verb:0.25}); this.tone({type:'triangle',f0:180,f1:90,dur:0.1,gain:0.12}); },
+  concreteHit(){ this.burst({type:'lowpass',f0:620,f1:170,dur:0.18,gain:0.34,verb:0.22}); this.tone({type:'sine',f0:118,f1:58,dur:0.16,gain:0.18}); },
+  wallBreak(){ this.burst({type:'lowpass',f0:1500,f1:110,dur:0.85,gain:0.52,verb:0.6}); this.tone({type:'sine',f0:72,f1:38,dur:0.75,gain:0.30}); },
   woodBreak(){ this.burst({type:'lowpass',f0:1600,f1:200,dur:0.6,gain:0.45,verb:0.5}); },
   pickup(){ this.tone({type:'sine',f0:760,dur:0.09,gain:0.16}); this.tone({type:'sine',f0:1140,dur:0.14,gain:0.13,when:0.07}); },
   hurt(){ this.burst({type:'lowpass',f0:500,dur:0.22,gain:0.38,verb:0.2}); this.tone({type:'sine',f0:96,f1:52,dur:0.28,gain:0.3}); },
@@ -4747,6 +4970,7 @@ addEventListener('keydown',e=>{
   if(e.code==='Digit1') selectWeapon(0);
   if(e.code==='Digit2') selectWeapon(1);
   if(e.code==='KeyF'){ P.flashOn=!P.flashOn; Audio.swap(); }
+  if(e.code==='KeyQ'){ P.crouchOn=!P.crouchOn; Audio.swap(); }
   if(e.code==='KeyP'){ PostFX.on=!PostFX.on; toast('POSTFX '+(PostFX.on?'ON':'OFF')); }
   if(e.code==='KeyH'){ el.debug.classList.toggle('on'); }
   if(e.code==='Tab'){ e.preventDefault(); }
@@ -4794,6 +5018,9 @@ function update(dt){
   GAME.time+=dt;
   updatePlayer(dt);
   updateWeapons(dt);
+  // navigation field for the infected (recomputed a few times a second)
+  NAV.acc+=dt;
+  if(NAV.acc>0.22){ NAV.acc=0; navField(); }
   // zombies
   for(let i=GAME.zombies.length-1;i>=0;i--){
     const z=GAME.zombies[i]; z.update(dt);
