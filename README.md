@@ -21,7 +21,9 @@
 
 ### 怎么玩
 
-1. 下载（或克隆）本仓库，得到 `dead-dawn.html`。
+**在线直接玩：** <https://sslztyx2012-web.github.io/261117mnmcode/>
+
+1. 下载（或克隆）本仓库，得到 `index.html`（这就是整个游戏，文件名是 `index.html` 是为了让 GitHub Pages 直接能打开）。
 2. 用 Chrome / Edge / Firefox 打开它。
 3. 点击「开始游戏」，鼠标会被指针锁定，`Esc` 退出。
 
@@ -68,7 +70,7 @@ AK-74M 与 M870 两把枪都是完整建模的：机匣、皮卡汀尼导轨、�
 
 ### 技术
 
-- 单文件：`dead-dawn.html`，约 250 KB，自包含。
+- 单文件：`index.html`，约 250 KB，自包含。
 - 渲染：three.js r160（唯一外部依赖，CDN import map），WebGL2。
 - 零外部素材：贴图 = Canvas 2D 噪声；模型 = 代码几何；音效 = WebAudio 合成。
 - 性能：约 260–430 draw calls、约 370–410k 三角形、1080p 下 110–144 FPS（高档画质）。导航寻路每 0.2 秒重算一次，单次约 1.5 ms。
@@ -77,7 +79,7 @@ AK-74M 与 M870 两把枪都是完整建模的：机匣、皮卡汀尼导轨、�
 ### 仓库结构
 
 ```
-dead-dawn.html   # 整个游戏
+index.html        # 整个游戏（单文件，GitHub Pages 入口）
 README.md
 LICENSE
 ```
@@ -94,7 +96,9 @@ Everything in the game is **procedurally generated**: not a single external text
 
 ### How to play
 
-1. Download (or clone) this repo and get `dead-dawn.html`.
+**Play it online:** <https://sslztyx2012-web.github.io/261117mnmcode/>
+
+1. Download (or clone) this repo and get `index.html` — that file *is* the whole game (it is named `index.html` so GitHub Pages can serve it straight away).
 2. Open it in Chrome / Edge / Firefox.
 3. Click **Start Game**. The pointer locks, press `Esc` to release it.
 
@@ -141,7 +145,7 @@ Chinese / English UI, radar minimap, directional damage indicators, hit markers,
 
 ### Tech
 
-- One file: `dead-dawn.html`, ~250 KB, fully self-contained.
+- One file: `index.html`, ~250 KB, fully self-contained.
 - Rendering: three.js r160 (the only external dependency, via CDN import map), WebGL2.
 - Zero external assets: textures = Canvas 2D noise, meshes = code geometry, audio = WebAudio synthesis.
 - Performance: ~260–430 draw calls, ~370–410k triangles, 110–144 FPS at 1080p on high quality. The navigation field is recomputed every 0.2 s at roughly 1.5 ms per pass.
@@ -150,7 +154,7 @@ Chinese / English UI, radar minimap, directional damage indicators, hit markers,
 ### Repository layout
 
 ```
-dead-dawn.html   # the entire game
+index.html        # the entire game (single file, GitHub Pages entry point)
 README.md
 LICENSE
 ```
