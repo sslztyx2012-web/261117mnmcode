@@ -869,6 +869,22 @@ function buildTextures(){
     ctx.fillStyle=g; ctx.beginPath(); ctx.arc(64,64,46,0,6.29); ctx.fill();
     TEX.blood=texFromCanvas(c,1,true); TEX.blood.wrapS=TEX.blood.wrapT=THREE.ClampToEdgeWrapping;
   }
+  // --- neutral splat sprite for particles ------------------------------
+  /* The particle system tints every sprite by its vertex colour, so the
+     sprite itself has to stay white.  A red sprite multiplied by a green
+     tint turns into mud - that is why the gore now reads green. */
+  {
+    const c=mkCanvas(128,128),ctx=c.getContext('2d'); ctx.clearRect(0,0,128,128);
+    ctx.fillStyle='rgba(255,255,255,.9)';
+    for(let i=0;i<26;i++){
+      const a=Math.random()*6.28, d=Math.pow(Math.random(),0.6)*52, r=3+Math.random()*13;
+      ctx.beginPath(); ctx.ellipse(64+Math.cos(a)*d,64+Math.sin(a)*d,r,r*(0.6+Math.random()*0.7),Math.random()*3,0,6.29); ctx.fill();
+    }
+    const g=ctx.createRadialGradient(64,64,0,64,64,46);
+    g.addColorStop(0,'rgba(255,255,255,.92)'); g.addColorStop(.6,'rgba(255,255,255,.55)'); g.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(64,64,46,0,6.29); ctx.fill();
+    TEX.splat=texFromCanvas(c,1,true); TEX.splat.wrapS=TEX.splat.wrapT=THREE.ClampToEdgeWrapping;
+  }
   // --- bullet hole decal ---
   {
     const c=mkCanvas(64,64),ctx=c.getContext('2d'); ctx.clearRect(0,0,64,64);
@@ -2879,11 +2895,22 @@ function shoot(){
 
 /* ray vs zombies + world colliders */
 const _ray=new THREE.Ray();
+/* Bullets pass through soft cover: the boards you nail over a door, the
+   perimeter sections the infected are busy smashing, the crawl-through gap
+   and low clutter. Solid walls and real cover still stop the round - but a
+   barricade must never lock you out of shooting the thing breaking it. */
+function blocksBullets(c){
+  if(c.type==='door'||c.type==='decal'||c.type==='low') return false;
+  if(c.breakable) return false;                 // smashable wall section
+  if(c.type==='prop'&&c.h<1.2) return false;    // low crates / clutter
+  return true;
+}
 function raycastShot(origin,dir){
   let bestT=Infinity,bestZ=null,bestHead=false,bestPoint=null,bestNormal=null,bestType=null;
   // world colliders (axis aligned boxes)
   for(const c of COL){
     if(!c.active) continue;
+    if(!blocksBullets(c)) continue;
     const t=rayBox(origin,dir,c.x-c.hw,c.x+c.hw,0,c.h,c.z-c.hd,c.z+c.hd);
     if(t!==null&&t<bestT){ bestT=t; bestZ=null; bestType=c.type||'wall'; bestPoint=origin.clone().addScaledVector(dir,t); bestNormal=dir.clone().negate(); }
   }
@@ -2909,16 +2936,17 @@ function rayBox(o,d,x0,x1,y0,y1,z0,z1){
 
 /* ------------------------- particles & decals ------------------------ */
 class Particles{
-  constructor(n){
+  constructor(n,size){
     this.n=n; this.pos=new Float32Array(n*3); this.col=new Float32Array(n*3);
     this.siz=new Float32Array(n); this.vel=new Float32Array(n*3); this.life=new Float32Array(n);
+    for(let i=0;i<n;i++) this.pos[i*3+1]=-9999;   // free slots stay out of sight
     this.max=new Float32Array(n); this.grav=new Float32Array(n); this.head=0;
     const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(this.pos,3));
     g.setAttribute('color',new THREE.BufferAttribute(this.col,3));
     g.setAttribute('size',new THREE.BufferAttribute(this.siz,1));
     this.geo=g;
-    this.mat=new THREE.PointsMaterial({size:0.16,map:TEX.blood,vertexColors:true,transparent:true,
+    this.mat=new THREE.PointsMaterial({size:size||0.16,map:TEX.splat,vertexColors:true,transparent:true,
       depthWrite:false,sizeAttenuation:true,opacity:0.95});
     this.points=new THREE.Points(g,this.mat); this.points.frustumCulled=false; scene.add(this.points);
   }
@@ -2931,7 +2959,7 @@ class Particles{
   }
   update(dt){
     for(let i=0;i<this.n;i++){
-      if(this.life[i]<=0){ this.siz[i]=0; continue; }
+      if(this.life[i]<=0){ this.siz[i]=0; this.pos[i*3+1]=-9999; continue; }
       this.life[i]-=dt;
       this.vel[i*3+1]-=this.grav[i]*dt;
       this.pos[i*3]+=this.vel[i*3]*dt;
@@ -2948,6 +2976,8 @@ class Particles{
   }
 }
 let PAR=null;
+/* thicker, slower green juice for the severed heads (own sprite layer) */
+let GOO=null;
 function spawnImpact(point,dir,normal,type){
   const metal=(type==='prop'), wood=(type==='door');
   const n=metal?14:9;
@@ -4057,14 +4087,17 @@ class Zombie{
     this.wanderDir=new THREE.Vector2(Math.cos(this.aimYaw),Math.sin(this.aimYaw));
   }
   get pos(){ return this.root.position; }
-  headWorld(out){ return this.head.getWorldPosition(out); }
+  headWorld(out){ if(this.headGone) return this.chest.getWorldPosition(out); return this.head.getWorldPosition(out); }
   torsoWorld(out){ return this.hips.getWorldPosition(out).add(new THREE.Vector3(0,0.3*this.scale,0)); }
   rayHit(origin,dir){
-    // head sphere
-    const hw=this.headWorld(_v1);
-    const hr=0.145*this.scale;
-    let t=raySphere(origin,dir,hw,hr);
-    let head=false, best=t;
+    // head sphere (gone once it has been blown off)
+    let t=null, head=false, best=null;
+    if(!this.headGone){
+      const hw=this.headWorld(_v1);
+      const hr=0.145*this.scale;
+      t=raySphere(origin,dir,hw,hr);
+      best=t;
+    }
     // body sphere
     const bw=this.torsoWorld(_v2);
     const br=0.34*this.scale;
@@ -4111,7 +4144,16 @@ class Zombie{
     // heading + probe point: needed for the steering and for the door check
     let dirx=tdx/Math.max(tdist,0.001), dirz=tdz/Math.max(tdist,0.001);
     this.hitDirX=dirx; this.hitDirZ=dirz;
-    if(this.nudgeT>0){ this.nudgeT-=dt; dirx+=this.nudgeX*1.3; dirz+=this.nudgeZ*1.3; }
+    // brain: if the way is blocked or the target cannot be reached, step
+    // sideways around the obstacle for a moment, then push on again
+    if(this.navLost||(this.stuckT||0)>1.5){
+      this.stuckT=0;
+      this.startEscape(tdx,tdz);
+      dirx=this.detourX; dirz=this.detourZ;      // commit to the way round
+    } else if(this.detourT>0){
+      this.detourT-=dt;
+      dirx+=this.detourX*1.2; dirz+=this.detourZ*1.2;
+    }
     const probe=1.5+this.scale*0.4;
     const aheadX=this.root.position.x+dirx*probe, aheadZ=this.root.position.z+dirz*probe;
     // a breakable panel in the way?  tear it open - the target may well be
@@ -4128,18 +4170,33 @@ class Zombie{
       const spd=this.speed*(this.type==='runner'&&dist>6?1:0.92);
       // obstacle steering
       {
-        // otherwise slide along the wall towards its nearest opening
+        // otherwise slide along the wall towards the end that leads to the
+        // player.  The navigation grid knows where the opening really is,
+        // so the infected no longer grind into a door frame.
         for(const c of COL){
           if(!c.active||c.type==='door') continue;
           const ox=c.hw+0.6-Math.abs(aheadX-c.x), oz=c.hd+0.6-Math.abs(aheadZ-c.z);
           if(ox>0&&oz>0){
             const alongX=c.hw>c.hd;
             const half=Math.max(c.hw,c.hd);
-            const cur=alongX?aheadX:aheadZ, cen=alongX?c.x:c.z;
+            const cen=alongX?c.x:c.z;
             const endA=cen-half, endB=cen+half;
-            const endE=(Math.abs(cur-endA)<Math.abs(cur-endB))?endA:endB;
-            if(alongX) dirx+= (Math.sign(endE-aheadX)||1)*0.95;
-            else      dirz+= (Math.sign(endE-aheadZ)||1)*0.95;
+            // probe just past both ends, on the side the infected is on
+            const side=alongX?((aheadZ>c.z)?0.78:-0.78):((aheadX>c.x)?0.78:-0.78);
+            const dA=alongX?navDistAt(endA-0.8,c.z+side):navDistAt(c.x+side,endA-0.8);
+            const dB=alongX?navDistAt(endB+0.8,c.z+side):navDistAt(c.x+side,endB+0.8);
+            let end;
+            if(dA>=0&&dB>=0) end=(dA<=dB)?endA:endB;
+            else if(dA>=0) end=endA;
+            else if(dB>=0) end=endB;
+            else{
+              const cur=alongX?aheadX:aheadZ;
+              end=(Math.abs(cur-endA)<Math.abs(cur-endB))?endA:endB;
+            }
+            // always slide towards that end and past it - never back into it
+            const sgn=Math.sign(end-cen)||1;
+            if(alongX) dirx+= sgn*0.95;
+            else      dirz+= sgn*0.95;
             break;
           }
         }
@@ -4192,12 +4249,28 @@ class Zombie{
     if(this.type==='spitter'&&dist<20&&dist>4&&this.attackCd<=0&&this.state==='chase'){
       this.attackCd=2.6; this.spit();
     }
-    // pinned against geometry for a long time?  shuffle sideways to get loose
-    if(this.state==='chase'&&(this.stuckT||0)>2.4){
-      this.stuckT=0;
-      const a=Math.random()*6.283;
-      this.nudgeX=Math.cos(a); this.nudgeZ=Math.sin(a); this.nudgeT=0.9;
+  }
+  /* the brain: when the way is blocked, look around for a way round and
+     walk it.  Every direction is scored by the navigation grid, so the
+     infected picks the side that actually leads to the player instead of
+     grinding against the same wall. */
+  startEscape(tdx,tdz){
+    const px=this.root.position.x, pz=this.root.position.z;
+    const tl=Math.hypot(tdx,tdz)||1;
+    const ux=tdx/tl, uz=tdz/tl;
+    let bestAng=Math.atan2(uz,ux), bestScore=-1e9;
+    for(let a=0;a<24;a++){
+      const ang=a/24*Math.PI*2;
+      const dx=Math.cos(ang), dz=Math.sin(ang);
+      if(!navFreeSpot(px+dx*1.25,pz+dz*1.25,0.30)) continue;
+      const d=navDistAt(px+dx*1.25,pz+dz*1.25);
+      let sc=(d>=0)?(-d*10):-1000;    // the route decides, the heading only breaks ties
+      sc+=(dx*ux+dz*uz)*0.6;
+      if(sc>bestScore){ bestScore=sc; bestAng=ang; }
     }
+    this.detourX=Math.cos(bestAng); this.detourZ=Math.sin(bestAng);
+    this.detourT=1.1+Math.random()*0.7;
+    this.detourSide=bestAng>0?1:-1;
   }
   move(dt,dx,dz,spd){
     const r=0.34*this.scale;
@@ -4212,6 +4285,21 @@ class Zombie{
       if(ox>0&&oz>0){
         if(ox<oz) this.root.position.x+=(ddx>=0?ox:-ox);
         else this.root.position.z+=(ddz>=0?oz:-oz);
+      }
+    }
+    // never overlap another infected - they shoulder each other out of the way
+    for(let i=0;i<GAME.zombies.length;i++){
+      const o=GAME.zombies[i];
+      if(o===this||o.dead) continue;
+      const sdx=this.root.position.x-o.root.position.x, sdz=this.root.position.z-o.root.position.z;
+      const minD=r+0.34*o.scale;
+      const d2=sdx*sdx+sdz*sdz;
+      if(d2<minD*minD){
+        const d=Math.sqrt(d2);
+        if(d<0.0001){ this.root.position.x+=minD; continue; }
+        const push=(minD-d)*0.5;
+        this.root.position.x+=sdx/d*push; this.root.position.z+=sdz/d*push;
+        o.root.position.x-=sdx/d*push; o.root.position.z-=sdz/d*push;
       }
     }
     // stuck watchdog: pinned against a wall for too long
@@ -4280,10 +4368,12 @@ class Zombie{
     /* ---- head: sway, tilt, twitch, slack jaw ---- */
     this.headTwitch=(this.headTwitch||0)-dt;
     if(this.headTwitch<=0){ this.headTwitch=rnd(1.2,4.0); this.headJerk=rnd(-0.30,0.30); }
+    if(!this.headGone){
     this.head.rotation.y=Math.sin(p*0.37)*0.20+(this.headJerk||0)*0.5;
     this.head.rotation.x=Math.sin(p*0.53)*0.06+D.headTilt*0.5-stag*0.20;
     this.head.rotation.z=Math.sin(p*0.50)*0.05+(crawl?0.14:0);
     this.jaw.rotation.x=D.jawOpen*(0.55+0.45*Math.sin(p*0.9))+(atkP>0?0.38:0);
+    }
     /* ---- hit flash on the skin ---- */
     if(this.skinMats[0]){
       const m=this.skinMats[0], b=m.userData.baseEm;
@@ -4316,9 +4406,11 @@ class Zombie{
       A.el.rotation.x=lerp(A.el.rotation.x,(A.side>0?DP.eR:DP.eL),e2);
       if(A.fingers) for(const f of A.fingers) f.rotation.x=lerp(f.rotation.x,0.55,e2);
     }
+    if(!this.headGone){
     this.head.rotation.x=lerp(this.head.rotation.x,DP.headZ,e2);
     this.head.rotation.y=lerp(this.head.rotation.y,DP.headY,e2);
     this.jaw.rotation.x=lerp(this.jaw.rotation.x,D.jawOpen*1.5,e2);
+    }
     const fall=this.type==='crawler'?1.55:this.deathDir;
     this.root.rotation.x=lerp(this.root.rotation.x,fall,e2);
     this.root.position.y=lerp(this.root.position.y,this.type==='crawler'?0.04:-0.05,e3);
@@ -4347,8 +4439,15 @@ class Zombie{
     addBloodPool(this.root.position.x,this.root.position.z);
     Audio.zombieDie(this);
     if(PAR) for(let i=0;i<16;i++){
-      PAR.spawn(this.root.position.x+rnd(-.2,.2),1.0+rnd(0,0.9),this.root.position.z+rnd(-.2,.2),
-        rnd(-2.4,2.4),rnd(1,4.5),rnd(-2.4,2.4),rnd(.4,.9),rnd(.05,.13),0.55,0.03,0.04,11);
+      const g=this.headGone?1:0;
+      const sys=(g&&GOO)?GOO:PAR;
+      sys.spawn(this.root.position.x+rnd(-.2,.2),1.0+rnd(0,0.9),this.root.position.z+rnd(-.2,.2),
+        rnd(-2.4,2.4),rnd(1,4.5),rnd(-2.4,2.4), g?rnd(.7,1.2):rnd(.4,.9), g?.30:rnd(.05,.13),
+        g?0.26:0.55, g?0.86:0.03, g?0.10:0.04, 11);
+    }
+    if(this.headGone&&GOO) for(let i=0;i<14;i++){   // a neck that was blown open keeps pumping
+      GOO.spawn(this.root.position.x+rnd(-.12,.12),1.45+rnd(-0.2,0.3),this.root.position.z+rnd(-.12,.12),
+        rnd(-1.6,1.6),rnd(1.6,4.2),rnd(-1.6,1.6), rnd(.5,.9), .30, 0.28,0.88,0.10, 9);
     }
     if(this.corpsesGone) {}
   }
@@ -4374,7 +4473,11 @@ function navRebuildBlocked(){
         const c=COL[i];
         if(!c.active) continue;
         if(c.type==='decal'||c.type==='door') continue;
-        const inside=Math.abs(cx-c.x)<c.hw+0.30 && Math.abs(cz-c.z)<c.hd+0.30;
+        /* Widen a collider by the body radius.  Padding a wall along its
+           length as well seals every doorway; padding too little lets the
+           route hug a wall the body cannot actually squeeze past. */
+        const pad=0.34;
+        const inside=Math.abs(cx-c.x)<c.hw+pad && Math.abs(cz-c.z)<c.hd+pad;
         if(c.breakable){ if(inside) p=3; continue; }  // smashable: passable but costly
         if(c.type==='low'){ if(inside){b=1;break;} continue; }  // crawl hole: too tight
         if(inside){ b=1; break; }
@@ -4417,6 +4520,25 @@ function navField(){
   }
   return dist;
 }
+/* is there room for an infected to stand at this spot? */
+function navFreeSpot(x,z,pad){
+  const p=(pad===undefined)?0.45:pad;
+  for(let i=0;i<COL.length;i++){
+    const c=COL[i];
+    if(!c.active) continue;
+    if(c.type==='decal') continue;
+    if(Math.abs(x-c.x)<c.hw+p && Math.abs(z-c.z)<c.hd+p) return false;
+  }
+  return true;
+}
+/* how far is this spot from the player, on the navigation grid? */
+function navDistAt(x,z){
+  const {cell,x0,z0,nx,nz,dist}=NAV;
+  if(!dist) return -1;
+  const ci=Math.floor((x-x0)/cell), cj=Math.floor((z-z0)/cell);
+  if(ci<0||ci>=nx||cj<0||cj>=nz) return -1;
+  return dist[cj*nx+ci];
+}
 function navTarget(zr){
   const {cell,x0,z0,nx,nz,dist,blocked}=NAV;
   if(!NAV.dist) return P.pos;
@@ -4424,7 +4546,9 @@ function navTarget(zr){
   let ci=Math.floor((px-x0)/cell), cj=Math.floor((pz-z0)/cell);
   if(ci<0||ci>=nx||cj<0||cj>=nz) return P.pos;
   let idx=cj*nx+ci;
+  zr.navLost=false;
   if(dist[idx]<0){
+    zr.navLost=true;                     // no route to the target: look for a way round
     // standing in a blocked cell: hop to the closest reachable neighbour
     let nb=-1,nd=1e9;
     for(let k=0;k<8;k++){
@@ -4483,11 +4607,94 @@ function raySphere(o,d,c,r){
   let t=-b-s; if(t<0.01) t=-b+s; if(t<0.01) return null;
   return t;
 }
+/* ---------------- severed heads: they fly, they roll, they drip ------------- */
+const HEADS=[];
+const _hq=new THREE.Quaternion();
+function popHead(z,hitPoint,dir){
+  const head=z.head;
+  if(!head||!head.parent||z.headGone) return;
+  // world transform of the head before it leaves the body
+  head.updateWorldMatrix(true,false);
+  const wp=new THREE.Vector3(), wq=new THREE.Quaternion(), ws=new THREE.Vector3();
+  head.matrixWorld.decompose(wp,wq,ws);
+  const sc=ws.x||1;
+  head.parent.remove(head);
+  scene.add(head);
+  head.position.copy(wp); head.quaternion.copy(wq); head.scale.copy(ws);
+  z.headGone=true;
+  // where on the head did the round land?  that decides which way it flies
+  const off=new THREE.Vector3(hitPoint.x-wp.x,hitPoint.y-wp.y,hitPoint.z-wp.z);
+  if(off.lengthSq()<1e-6) off.set(rnd(-1,1),rnd(0.2,1),rnd(-1,1));
+  off.normalize();
+  const v=new THREE.Vector3(
+    dir.x*2.1+off.x*3.4+rnd(-0.9,0.9),
+    4.4+rnd(0,2.0)+Math.max(0,off.y)*1.4,
+    dir.z*2.1+off.z*3.4+rnd(-0.9,0.9));
+  const av=new THREE.Vector3(rnd(-16,16)+off.x*9,rnd(-14,14),rnd(-16,16)+off.z*9);
+  HEADS.push({mesh:head,v:v,av:av,r:0.15*sc+0.03,life:0,ground:false,settled:false});
+  // green spray out of the neck
+  const neck=(z.rig&&z.rig.neck)? z.rig.neck.getWorldPosition(new THREE.Vector3()) : wp.clone();
+  if(GOO) for(let i=0;i<36;i++){
+    GOO.spawn(neck.x+rnd(-0.09,0.09),neck.y+rnd(-0.12,0.06),neck.z+rnd(-0.09,0.09),
+      dir.x*rnd(1,5.5)+rnd(-2.4,2.4), rnd(0.6,5.0), dir.z*rnd(1,5.5)+rnd(-2.4,2.4),
+      rnd(.55,.95), .30, 0.26,0.86,0.10, rnd(9,14));
+  }
+  for(let i=0;i<12;i++){
+    GOO.spawn(wp.x+rnd(-0.12,0.12),wp.y+rnd(-0.1,0.1),wp.z+rnd(-0.12,0.12),
+      rnd(-3,3),rnd(0.5,4.0),rnd(-3,3), rnd(.35,.65), .28, 0.30,0.92,0.12, rnd(8,12));
+  }
+  Audio.headPop();
+}
+function updateHeads(dt){
+  for(let i=HEADS.length-1;i>=0;i--){
+    const h=HEADS[i];
+    h.life+=dt;
+    if(h.life>20){ scene.remove(h.mesh); HEADS.splice(i,1); continue; }
+    if(!h.settled){
+      h.v.y-=19*dt;
+      h.mesh.position.addScaledVector(h.v,dt);
+      const wl=h.av.length();
+      if(wl>0.001){
+        _hq.setFromAxisAngle(h.av.clone().normalize(),wl*dt);
+        h.mesh.quaternion.premultiply(_hq);
+      }
+      // green drip while it is still in the air
+      if(GOO&&Math.random()<0.22){
+        GOO.spawn(h.mesh.position.x+rnd(-0.05,0.05),h.mesh.position.y-rnd(0.05,0.12),h.mesh.position.z+rnd(-0.05,0.05),
+          rnd(-0.7,0.7),rnd(-1.6,-0.2),rnd(-0.7,0.7), rnd(.3,.55), .20, 0.28,0.86,0.10, 12);
+      }
+    }
+    // ground contact: bounce once or twice, then roll
+    const gy=h.r;
+    if(h.mesh.position.y<gy){
+      h.mesh.position.y=gy;
+      h.ground=true;
+      if(h.v.y<0){ h.v.y=-h.v.y*0.34; h.v.x*=0.68; h.v.z*=0.68; h.av.multiplyScalar(0.55); }
+      const spd=Math.hypot(h.v.x,h.v.z);
+      if(spd<0.35&&Math.abs(h.v.y)<0.9){
+        h.settled=true; h.v.set(0,0,0); h.av.set(0,0,0);
+        h.mesh.rotation.set(rnd(-0.5,0.5),rnd(0,6.28),rnd(-0.4,0.4));
+      }
+    }
+    // roll along the ground
+    if(h.ground&&!h.settled){
+      const spd=Math.hypot(h.v.x,h.v.z);
+      if(spd>0.05){
+        const ax=new THREE.Vector3(-h.v.z,0,h.v.x).normalize();
+        _hq.setFromAxisAngle(ax,(spd/Math.max(h.r,0.05))*dt);
+        h.mesh.quaternion.premultiply(_hq);
+      }
+    }
+  }
+}
 function damageZombie(z,dmg,dir,point,head){
+  const lethal=(z.hp-dmg)<=0;
+  if(head){ popHead(z,point,dir); z.hp=0; }   // a round to the head puts it down
   z.hurt(dmg,dir);
-  if(PAR) for(let i=0;i<7;i++){
-    PAR.spawn(point.x,point.y,point.z,dir.x*rnd(0.5,2.4)+rnd(-1,1),rnd(0.4,2.6),dir.z*rnd(0.5,2.4)+rnd(-1,1),
-      rnd(.25,.55),rnd(.04,.1),0.52,0.04,0.05,10);
+  const hsys=(head&&GOO)?GOO:PAR;
+  if(hsys) for(let i=0;i<7;i++){
+    hsys.spawn(point.x,point.y,point.z,dir.x*rnd(0.5,2.4)+rnd(-1,1),rnd(0.4,2.6),dir.z*rnd(0.5,2.4)+rnd(-1,1),
+      head?rnd(.3,.55):rnd(.25,.55), head?.22:rnd(.04,.1), head?0.30:0.52, head?0.88:0.04, head?0.12:0.05,10);
   }
   showHitmarker(!!head);
 }
@@ -4762,6 +4969,9 @@ const Audio={
   woodHit(){ this.burst({type:'bandpass',f0:900,q:1.4,dur:0.11,gain:0.30,verb:0.25}); this.tone({type:'triangle',f0:180,f1:90,dur:0.1,gain:0.12}); },
   concreteHit(){ this.burst({type:'lowpass',f0:620,f1:170,dur:0.18,gain:0.34,verb:0.22}); this.tone({type:'sine',f0:118,f1:58,dur:0.16,gain:0.18}); },
   wallBreak(){ this.burst({type:'lowpass',f0:1500,f1:110,dur:0.85,gain:0.52,verb:0.6}); this.tone({type:'sine',f0:72,f1:38,dur:0.75,gain:0.30}); },
+  headPop(){ this.burst({type:'lowpass',f0:900,f1:90,dur:0.34,gain:0.55,verb:0.35});
+    this.tone({type:'sawtooth',f0:180,f1:48,dur:0.26,gain:0.22});
+    this.burst({type:'bandpass',f0:2600,q:0.8,dur:0.09,gain:0.22}); },
   woodBreak(){ this.burst({type:'lowpass',f0:1600,f1:200,dur:0.6,gain:0.45,verb:0.5}); },
   pickup(){ this.tone({type:'sine',f0:760,dur:0.09,gain:0.16}); this.tone({type:'sine',f0:1140,dur:0.14,gain:0.13,when:0.07}); },
   hurt(){ this.burst({type:'lowpass',f0:500,dur:0.22,gain:0.38,verb:0.2}); this.tone({type:'sine',f0:96,f1:52,dur:0.28,gain:0.3}); },
@@ -5039,6 +5249,9 @@ function update(dt){
   drawRadar();
   // particles
   if(PAR) PAR.update(dt);
+  if(GOO) GOO.update(dt);
+  // severed heads still bouncing around
+  updateHeads(dt);
   // tracers
   for(const tr of tracerPool){
     if(!tr.active) continue;
@@ -5138,7 +5351,7 @@ function initSteps(){
     [46,()=>{ buildMaterials(); }],
     [62,()=>{ buildWorld(); }],
     [82,()=>{ ensureZMats(); ensurePMats(); }],
-    [92,()=>{ initWeapons(); PAR=new Particles(900); }],
+    [92,()=>{ initWeapons(); PAR=new Particles(900); GOO=new Particles(300,0.24); }],
     [100,()=>{ applyQuality(); PostFX.strength=SET.bloom/100; resetGame();
       if(window.__DD&&window.__DD.test){
         const d=DIFF[SET.diff]||DIFF[0];

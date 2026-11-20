@@ -65,15 +65,27 @@ AK-74M 与 M870 两把枪都是完整建模的：机匣、皮卡汀尼导轨、�
 感染者不再只在门外干瞪眼。一张 0.5 米的导航网格每 0.2 秒从玩家位置重新泛洪一次，尸群会自动绕开障碍、找到大门的缺口、穿过营房与指挥部的门洞，一路追到你面前。围墙上有四处可以砸开的加固段：普通感染者要砸十几下，brute 只要几下就能把混凝土墙敲穿，碎石会留在原地。围墙东侧还有一段已经塌掉的破口，不用拆就能直接挤进来。
 反过来，南墙有一处 1.2 米高的矮口：**只有蹲下的玩家钻得过去，感染者永远过不来** —— 那是给你留的逃生通道，不是给它们的。
 
+**爆头：头会飞出去，脖子喷绿汁**
+一枪打中脑袋，感染者当场倒地 —— 头颅沿着**被打中的那一侧**飞出去：打左边就往左飞，打右边就往右飞，飞得够远还会翻着跟头落下，落地弹一下、滚一段，最后静静躺在地上。飞行途中一路滴着**绿色浓汁**，脖子的断口同时在狂喷。打身体依然是原来的红色血浆效果。
+
+**丧尸不会互相重叠**
+感染者之间有体积：挤在一起会互相顶开，不会叠在同一个点上，也不会穿模重合。
+
+**它们长了脑子**
+会自己找路。卡住了、被堵住了、或者目标暂时够不着的时候，会先用导航网格评估四周，挑一条**真正能通向你的方向**绕过去 —— 往左、往右、贴着墙挪都行，绝不会卡在原地磨蹭。
+
+**子弹能穿过软障碍**
+你钉在门窗上的木板、感染者正在猛砸的可破坏墙段、地上的矮口与低矮杂物，都不再挡子弹 —— 你可以隔着路障把那只正在砸门的感染者一枪爆头。实心墙和高掩体仍然挡子弹，掩体该有的意义一点不少。
+
 **其它**
 中英双语界面、雷达小地图、受击方向指示、命中标记、程序化音效、照片模式（`?photo=1&shot=N`）、死亡统计。
 
 ### 技术
 
-- 单文件：`index.html`，约 250 KB，自包含。
+- 单文件：`index.html`，约 261 KB，自包含。
 - 渲染：three.js r160（唯一外部依赖，CDN import map），WebGL2。
 - 零外部素材：贴图 = Canvas 2D 噪声；模型 = 代码几何；音效 = WebAudio 合成。
-- 性能：约 260–430 draw calls、约 370–410k 三角形、1080p 下 110–144 FPS（高档画质）。导航寻路每 0.2 秒重算一次，单次约 1.5 ms。
+- 性能：约 370–450 draw calls、约 350–410k 三角形，1080p 下 132–144 FPS（高档画质）。导航寻路每 0.2 秒重算一次，单次约 1.5 ms。
 - 渲染分两遍：世界（layer 0）与第一人称武器（layer 3）分别用不同的镜头参数渲染，武器有独立的 52° 视角，避免近距离透视把枪身拉变形。
 
 ### 仓库结构
@@ -140,15 +152,27 @@ Five infected types (walker / runner / brute / spitter / crawler), each with its
 They no longer mill about outside. A 0.5 m navigation grid is flood-filled from your position a few times a second, so the horde paths around obstacles, finds the gap in the main gate, slips through the building doorways and reaches you. Four sections of the perimeter wall can be knocked down: a regular walker needs a dozen swings, a brute punches through the concrete in a few, and the rubble is left behind. A collapsed section on the east wall needs no demolition at all — they simply squeeze through it.
 The other way round: there is a 1.2 m crawl-through in the south wall that **only a crouching player fits through — the infected never can**. That one is your escape route, not theirs.
 
+**Headshots: the head flies off, the neck sprays green**
+One round to the head puts the infected down instantly — and the head **flies off towards the side you hit**: shoot it on the left and it goes left, shoot it on the right and it goes right, tumbling through the air before it bounces, rolls and finally lies still on the ground. It drips **green goo** the whole way down while the torn neck keeps pumping. Body shots are unchanged — still the old red blood.
+
+**The infected never overlap**
+They have volume: shoulder each other apart instead of stacking into one point or clipping through each other.
+
+**They have a brain now**
+They find their own way. When they are pinned, blocked or the target is momentarily unreachable, they score the surroundings against the navigation grid and pick a direction that **actually leads to you** — left, right, sliding along a wall — instead of grinding away in one spot.
+
+**Bullets pass through soft cover**
+The boards you nail over a door, the wall sections the infected are busy smashing, the crawl gap and low clutter no longer stop a round — you can put a headshot through the barricade into the thing breaking it. Solid walls and real cover still stop bullets, so cover still means something.
+
 **Extras**
 Chinese / English UI, radar minimap, directional damage indicators, hit markers, procedural audio, a photo mode (`?photo=1&shot=N`) and an end-of-run scorecard.
 
 ### Tech
 
-- One file: `index.html`, ~250 KB, fully self-contained.
+- One file: `index.html`, ~261 KB, fully self-contained.
 - Rendering: three.js r160 (the only external dependency, via CDN import map), WebGL2.
 - Zero external assets: textures = Canvas 2D noise, meshes = code geometry, audio = WebAudio synthesis.
-- Performance: ~260–430 draw calls, ~370–410k triangles, 110–144 FPS at 1080p on high quality. The navigation field is recomputed every 0.2 s at roughly 1.5 ms per pass.
+- Performance: ~370–450 draw calls, ~350–410k triangles, 132–144 FPS at 1080p on high quality. The navigation field is recomputed every 0.2 s at roughly 1.5 ms per pass.
 - Two-pass rendering: the world (layer 0) and the first-person weapon (layer 3) are rendered with different lens parameters — the weapon gets its own 52° lens so close-range perspective doesn't smear the gun into unreadable wedges.
 
 ### Repository layout
